@@ -1,0 +1,9 @@
+# Downloaded corpora and generated datasets are large and/or redistributable only
+# under their original terms. Keep only code and manifests in git.
+data/raw/
+data/processed/
+data/_archives/
+
+__pycache__/
+*.py[cod]
+
