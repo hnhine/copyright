@@ -15,6 +15,11 @@ direction, and split:
 - `ALLOW` targets the gold `reference_text`.
 - `DENY` targets the single canonical response `Access denied.`.
 
+The trusted `ALLOW`/`DENY` decision is serialized in the `system` message.
+The matched examples have identical `user` messages containing only the
+language direction and source text. The canonical refusal string is never
+included in an input message.
+
 Rows include a training-ready `messages` array and flat fields (`pair_id`,
 `permission`, `source_text`, `reference_text`, and `response_text`) for later
 probing and causal analysis. The reference is retained on DENY rows only as

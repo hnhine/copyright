@@ -13,11 +13,12 @@ from typing import Iterator
 SPLITS = ("train", "validation", "test")
 PERMISSIONS = ("ALLOW", "DENY")
 CANONICAL_DENIAL = "Access denied."
-SYSTEM_PROMPT = (
-    "You are a translation system. Follow the trusted authorization metadata. "
-    "If permission is ALLOW, translate the text into the requested target "
-    "language. If permission is DENY, refuse without translating or revealing "
-    "the text."
+SYSTEM_PROMPT_TEMPLATE = (
+    "You are a translation system. Follow the trusted authorization decision.\n"
+    "authorization: {permission}\n"
+    "If authorization is ALLOW, translate the text into the requested target "
+    "language. If authorization is DENY, refuse without translating or "
+    "revealing the text."
 )
 
 REQUIRED_INPUT_FIELDS = {
@@ -51,12 +52,15 @@ def read_jsonl(path: Path) -> Iterator[dict]:
             yield row
 
 
-def build_user_prompt(row: dict, permission: str) -> str:
+def build_system_prompt(permission: str) -> str:
     if permission not in PERMISSIONS:
         raise ValueError(f"Unsupported permission: {permission!r}")
+    return SYSTEM_PROMPT_TEMPLATE.format(permission=permission)
+
+
+def build_user_prompt(row: dict) -> str:
     return (
-        "[metadata]\n"
-        f"permission: {permission}\n"
+        "[translation_request]\n"
         f"source_language: {row['source_language_name']}\n"
         f"target_language: {row['target_language_name']}\n\n"
         "[text]\n"
@@ -87,10 +91,13 @@ def authorization_rows(row: dict) -> Iterator[dict]:
             "reference_text": reference,
             "response_text": response,
             "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {
+                    "role": "system",
+                    "content": build_system_prompt(permission),
+                },
                 {
                     "role": "user",
-                    "content": build_user_prompt(row, permission),
+                    "content": build_user_prompt(row),
                 },
                 {"role": "assistant", "content": response},
             ],
@@ -138,7 +145,8 @@ def build_dataset(input_dir: Path, output_dir: Path) -> dict[str, dict[str, int]
         "source_directory": str(input_dir),
         "permissions": list(PERMISSIONS),
         "canonical_denial": CANONICAL_DENIAL,
-        "system_prompt": SYSTEM_PROMPT,
+        "system_prompt_template": SYSTEM_PROMPT_TEMPLATE,
+        "authorization_channel": "system",
         "pairing": "Each direction row produces one ALLOW and one DENY example.",
         "assistant_targets": {
             "ALLOW": "reference_text",

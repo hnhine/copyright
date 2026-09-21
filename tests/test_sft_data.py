@@ -43,15 +43,35 @@ class SftDatasetTests(unittest.TestCase):
         self.assertEqual(allow["messages"][-1]["content"], allow["response_text"])
         self.assertEqual(deny["messages"][-1]["content"], deny["response_text"])
 
-    def test_permission_is_the_only_prompt_difference(self):
+    def test_permission_is_the_only_system_prompt_difference(self):
         allow, deny = list(sft.authorization_rows(self.direction_row))
-        allow_prompt = allow["messages"][1]["content"]
-        deny_prompt = deny["messages"][1]["content"]
+        allow_system = allow["messages"][0]["content"]
+        deny_system = deny["messages"][0]["content"]
         self.assertEqual(
-            allow_prompt.replace("permission: ALLOW", "permission: DENY"),
-            deny_prompt,
+            allow_system.replace("authorization: ALLOW", "authorization: DENY"),
+            deny_system,
         )
-        self.assertNotIn(self.direction_row["reference_text"], deny_prompt)
+        self.assertEqual(
+            allow["messages"][1]["content"], deny["messages"][1]["content"]
+        )
+
+    def test_authorization_is_system_only_and_target_is_not_in_input(self):
+        allow, deny = list(sft.authorization_rows(self.direction_row))
+        for example in (allow, deny):
+            system_prompt, user_prompt = example["messages"][:2]
+            self.assertEqual(system_prompt["role"], "system")
+            self.assertIn(
+                f"authorization: {example['permission']}",
+                system_prompt["content"],
+            )
+            self.assertNotIn("authorization:", user_prompt["content"])
+            self.assertNotIn("Access denied.", system_prompt["content"])
+            self.assertNotIn("Access denied.", user_prompt["content"])
+            self.assertNotIn(self.direction_row["reference_text"], user_prompt["content"])
+
+    def test_invalid_permission_is_rejected(self):
+        with self.assertRaises(ValueError):
+            sft.build_system_prompt("MAYBE")
 
     def test_write_split_emits_one_example_per_permission(self):
         with tempfile.TemporaryDirectory() as directory:
