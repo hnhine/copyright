@@ -3,7 +3,7 @@
 data/raw/
 data/processed/
 data/_archives/
+outputs/
 
 __pycache__/
 *.py[cod]
-

@@ -1,0 +1,6 @@
+transformers>=4.48,<5
+accelerate>=1.2,<2
+safetensors>=0.4.5
+sacrebleu>=2.4,<3
+lingua-language-detector>=2.0,<3
+tqdm>=4.66

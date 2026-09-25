@@ -1,12 +1,15 @@
 # Paired ALLOW/DENY SFT data
 
-Run this after preparing DGT-Acquis:
+Run this after preparing and language-cleaning DGT-Acquis:
 
 ```bash
-python scripts/data/build_sft.py
+python scripts/data/clean_dgt_languages.py
+python scripts/data/build_sft.py \
+  --input-dir data/processed/dgt_acquis_clean/directions \
+  --output-dir data/processed/sft
 ```
 
-The command reads `data/processed/dgt_acquis/directions/` and writes
+The SFT builder writes
 `data/processed/sft/{train,validation,test}.jsonl` plus `metadata.json`.
 
 Every direction row becomes a matched pair with identical text, language

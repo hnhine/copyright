@@ -9,8 +9,9 @@ of the authorization-conditioned translation project:
   refusal, leakage, and prompt-attack evaluation. It has no gold translations,
   so it is not used for the main COMET/chrF claim.
 
-Run every command from the `copyright/` repository root. Python 3.9+ is enough;
-there are no third-party dependencies.
+Run every command from the `copyright/` repository root. Python 3.9+ is enough
+for downloading and initial preparation. Install `requirements-eval.txt` before
+the language-cleaning stage.
 
 ## 1. Download raw data
 
@@ -44,7 +45,7 @@ Defaults implement the proposed pilot setup:
 - documents, rather than individual paragraphs, are deterministically assigned
   to train/validation/test;
 - uniform reservoir sampling retains 1,500/200/800 triples;
-- four directions are emitted: EN-FR, EN-DE, FR-EN, and DE-EN.
+- four directions are available: EN-FR, EN-DE, FR-EN, and DE-EN.
 
 Outputs:
 
@@ -64,7 +65,31 @@ python scripts/data/prepare_dgt.py \
   --directions en-fr en-de fr-en de-en
 ```
 
-## 3. Prepare NoticeBench
+## 3. Remove wrong-language DGT rows
+
+The official aligned files contain some untranslated or wrong-language rows.
+Keep the initial prepared data intact and write a clean copy:
+
+```bash
+python -m pip install -r requirements-eval.txt
+python scripts/data/clean_dgt_languages.py
+```
+
+The cleaner requires the `en`, `fr`, and `de` columns to be detected as
+English, French, and German with confidence at least `0.90`. It writes:
+
+```text
+data/processed/dgt_acquis_clean/
+├── language_audit.json
+├── rejected/{train,validation,test}.jsonl
+├── triples/{train,validation,test}.jsonl
+└── directions/{train,validation,test}.jsonl
+```
+
+Rejected reports contain IDs, detected languages, confidence values, and
+reasons, but do not duplicate the paragraph text.
+
+## 4. Prepare NoticeBench
 
 ```bash
 python scripts/data/prepare_noticebench.py \
@@ -76,8 +101,8 @@ python scripts/data/prepare_noticebench.py \
 This creates 100 deterministic, non-overlapping passages from the 10 books and
 10 movie scripts currently included upstream. Set `--samples-per-document 8`
 for a target of up to 160 passages. The original per-document copyright notice
-is retained as metadata, while authorization (`ALLOW`/`DENY`) will be added in a
-later dataset-building stage.
+is retained as metadata, while authorization (`ALLOW`/`DENY`) will be added in
+a later dataset-building stage.
 
 ## Provenance and use
 
@@ -86,6 +111,5 @@ attribution. See the [official terms and download page](https://joint-research-c
 
 NoticeBench contains copyrighted source material released as a research
 benchmark. Keep raw and processed content out of git, do not redistribute it,
-and review the upstream repository/paper before release. The project `.gitignore`
-excludes all downloaded and generated data by default.
-
+and review the upstream repository/paper before release. The project
+`.gitignore` excludes all downloaded and generated data by default.
