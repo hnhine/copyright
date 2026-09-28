@@ -50,6 +50,17 @@ behavior:
 Reports produced by the current scorer include
 `"metric_version": "behavior_v2"`.
 
+## Deterministic chat templates
+
+Llama 3.x chat templates insert `Today Date: <current date>` into the system
+prompt unless `date_string` is supplied, so the same messages render
+differently on different days. Every config sets `chat_template_kwargs`
+(`{"date_string": "26 Jul 2024"}` for Llama, `{}` otherwise). The runner
+renders through `chat_render.render_chat`, includes the kwargs in each request
+fingerprint, and aborts before loading the model if the rendered prompt still
+changes with the system date. Llama outputs generated before this check embed
+the date of the run and should be regenerated under a new `--run-name`.
+
 ## Safe resume behavior
 
 New generation records contain a fingerprint over the prompt, evaluation

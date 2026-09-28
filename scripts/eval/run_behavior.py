@@ -10,6 +10,7 @@ import os
 import time
 from pathlib import Path
 
+from chat_render import assert_date_independent, render_chat
 from prompts import build_messages, index_pairs, select_pairs
 
 
@@ -40,6 +41,7 @@ def add_request_fingerprints(
         "max_new_tokens": config["max_new_tokens"],
         "do_sample": config["do_sample"],
         "generation_seed": config.get("generation_seed", config["seed"]),
+        "chat_template_kwargs": config.get("chat_template_kwargs", {}),
     }
     for request in requests:
         request_payload = {
@@ -226,6 +228,8 @@ def main() -> None:
     tokenizer.padding_side = "left"
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
+    chat_template_kwargs = config.get("chat_template_kwargs", {})
+    assert_date_independent(tokenizer, pending[0]["messages"], chat_template_kwargs)
 
     model = AutoModelForCausalLM.from_pretrained(
         config["model_id"],
@@ -263,6 +267,7 @@ def main() -> None:
         "do_sample": config["do_sample"],
         "seed": config["seed"],
         "generation_seed": generation_seed,
+        "chat_template_kwargs": chat_template_kwargs,
         "request_set_fingerprint": stable_hash(
             sorted(request["request_fingerprint"] for request in requests)
         ),
@@ -276,10 +281,11 @@ def main() -> None:
         for start in tqdm(range(0, len(pending), batch_size), desc="generate"):
             batch = pending[start : start + batch_size]
             rendered = [
-                tokenizer.apply_chat_template(
+                render_chat(
+                    tokenizer,
                     item["messages"],
-                    tokenize=False,
                     add_generation_prompt=True,
+                    chat_template_kwargs=chat_template_kwargs,
                 )
                 for item in batch
             ]

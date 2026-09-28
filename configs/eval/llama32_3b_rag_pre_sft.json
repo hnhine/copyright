@@ -8,6 +8,9 @@
   "conditions": ["CONTROL", "ALLOW", "DENY"],
   "dtype": "bfloat16",
   "attn_implementation": "sdpa",
+  "chat_template_kwargs": {
+    "date_string": "26 Jul 2024"
+  },
   "batch_size": 16,
   "max_new_tokens": 384,
   "do_sample": false,
