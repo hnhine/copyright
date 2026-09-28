@@ -1,0 +1,16 @@
+{
+  "model_id": "Qwen/Qwen2.5-3B-Instruct",
+  "model_revision": "aa8e72537993ba99e69dfaafa59ed015b17504d1",
+  "cache_dir": "/workspace/nhi/huggingface/hub",
+  "input_dir": "data/processed/sft_rag",
+  "output_dir": "outputs/behavior/qwen2.5-3b-instruct/rag_pre_sft",
+  "prompt_version": "rag_v1",
+  "conditions": ["CONTROL", "ALLOW", "DENY"],
+  "dtype": "bfloat16",
+  "attn_implementation": "sdpa",
+  "batch_size": 16,
+  "max_new_tokens": 384,
+  "do_sample": false,
+  "seed": 42,
+  "validation_pairs_per_direction": 25
+}

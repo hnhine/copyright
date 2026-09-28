@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import time
@@ -12,23 +13,87 @@ from pathlib import Path
 from prompts import build_messages, index_pairs, select_pairs
 
 
+GENERATION_SCHEMA_VERSION = 2
+
+
 def read_jsonl(path: Path) -> list[dict]:
     with path.open("r", encoding="utf-8") as handle:
         return [json.loads(line) for line in handle if line.strip()]
 
 
-def existing_run_ids(path: Path) -> set[str]:
+def stable_hash(value: object) -> str:
+    payload = json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def add_request_fingerprints(
+    requests: list[dict], config: dict, revision: str
+) -> None:
+    generation_settings = {
+        "model_id": config["model_id"],
+        "model_revision": revision,
+        "prompt_version": config["prompt_version"],
+        "dtype": config["dtype"],
+        "attn_implementation": config.get("attn_implementation", "sdpa"),
+        "max_new_tokens": config["max_new_tokens"],
+        "do_sample": config["do_sample"],
+        "generation_seed": config.get("generation_seed", config["seed"]),
+    }
+    for request in requests:
+        request_payload = {
+            key: value
+            for key, value in request.items()
+            if key != "request_fingerprint"
+        }
+        request["request_fingerprint"] = stable_hash(
+            {
+                "schema_version": GENERATION_SCHEMA_VERSION,
+                "request": request_payload,
+                "generation": generation_settings,
+            }
+        )
+
+
+def existing_run_ids(path: Path, requests: list[dict]) -> set[str]:
     if not path.exists():
         return set()
-    return {row["run_id"] for row in read_jsonl(path)}
+
+    expected = {request["run_id"]: request for request in requests}
+    if len(expected) != len(requests):
+        raise ValueError("Current request set contains duplicate run_id values")
+
+    completed = set()
+    for row in read_jsonl(path):
+        run_id = row["run_id"]
+        if run_id in completed:
+            raise ValueError(f"Duplicate run_id in existing output: {run_id!r}")
+        completed.add(run_id)
+        if run_id not in expected:
+            raise ValueError(
+                f"Existing output contains unexpected run_id {run_id!r}; "
+                "use a new --run-name"
+            )
+        actual = row.get("request_fingerprint")
+        wanted = expected[run_id]["request_fingerprint"]
+        if actual != wanted:
+            reason = "missing" if actual is None else "different"
+            raise ValueError(
+                f"Existing output has {reason} request fingerprint for "
+                f"{run_id!r}; use a new --run-name"
+            )
+    return completed
 
 
 def build_requests(pairs: list[dict[str, dict]], conditions: list[str]) -> list[dict]:
+    conditions = [condition.upper() for condition in conditions]
+    if len(set(conditions)) != len(conditions):
+        raise ValueError(f"Duplicate conditions: {conditions!r}")
     requests = []
     for pair in pairs:
         base = pair["ALLOW"]
         for condition in conditions:
-            condition = condition.upper()
             requests.append(
                 {
                     "run_id": f"{base['pair_id']}:{condition.lower()}",
@@ -36,8 +101,12 @@ def build_requests(pairs: list[dict[str, dict]], conditions: list[str]) -> list[
                     "condition": condition,
                     "source_language": base["source_language"],
                     "target_language": base["target_language"],
+                    "task": base.get("task", "translate"),
+                    "prompt_version": base.get("prompt_version"),
                     "source_text": base["source_text"],
-                    "reference_text": base["reference_text"],
+                    "reference_text": base.get("reference_text"),
+                    "gold_text": base.get("gold_text", base.get("reference_text")),
+                    "canaries": base.get("canaries"),
                     "messages": build_messages(pair, condition),
                 }
             )
@@ -55,17 +124,28 @@ def resolve_dtype(name: str, torch):
     return values[name]
 
 
+def split_generated_ids(
+    ids: list[int], eos_token_id: int | None, pad_token_id: int | None
+) -> tuple[list[int], str]:
+    """Remove stop/pad tokens and report why generation ended.
+
+    EOS must be checked before PAD because many tokenizers use the same ID for
+    both. The returned token count consistently excludes both special tokens.
+    """
+    result = []
+    for token_id in ids:
+        if eos_token_id is not None and token_id == eos_token_id:
+            return result, "eos"
+        if pad_token_id is not None and token_id == pad_token_id:
+            return result, "pad"
+        result.append(token_id)
+    return result, "max_new_tokens"
+
+
 def trim_generated_ids(
     ids: list[int], eos_token_id: int | None, pad_token_id: int | None
 ) -> list[int]:
-    result = []
-    for token_id in ids:
-        if pad_token_id is not None and token_id == pad_token_id:
-            break
-        result.append(token_id)
-        if eos_token_id is not None and token_id == eos_token_id:
-            break
-    return result
+    return split_generated_ids(ids, eos_token_id, pad_token_id)[0]
 
 
 def parse_args() -> argparse.Namespace:
@@ -103,8 +183,20 @@ def main() -> None:
 
     pairs = index_pairs(read_jsonl(input_path))
     selected_pairs = select_pairs(pairs, per_direction, config["seed"])
+    prompt_versions = {
+        pair["ALLOW"].get("prompt_version")
+        for pair in selected_pairs
+        if pair["ALLOW"].get("prompt_version") is not None
+    }
+    if prompt_versions and prompt_versions != {config["prompt_version"]}:
+        raise ValueError(
+            f"Config prompt_version={config['prompt_version']!r} does not match "
+            f"selected data versions={sorted(prompt_versions)!r}"
+        )
+    revision = config.get("model_revision") or "main"
     requests = build_requests(selected_pairs, config["conditions"])
-    completed = existing_run_ids(output_path)
+    add_request_fingerprints(requests, config, revision)
+    completed = existing_run_ids(output_path, requests)
     pending = [request for request in requests if request["run_id"] not in completed]
 
     print(
@@ -117,12 +209,13 @@ def main() -> None:
 
     import torch
     from tqdm import tqdm
-    from transformers import AutoModelForCausalLM, AutoTokenizer
+    from transformers import AutoModelForCausalLM, AutoTokenizer, set_seed
 
     cache_dir = Path(config["cache_dir"])
     cache_dir.mkdir(parents=True, exist_ok=True)
+    generation_seed = config.get("generation_seed", config["seed"])
+    set_seed(generation_seed)
     token = os.environ.get("HF_TOKEN") or None
-    revision = config.get("model_revision") or "main"
 
     tokenizer = AutoTokenizer.from_pretrained(
         config["model_id"],
@@ -152,6 +245,7 @@ def main() -> None:
         model.generation_config.top_k = None
 
     manifest = {
+        "generation_schema_version": GENERATION_SCHEMA_VERSION,
         "model_id": config["model_id"],
         "requested_revision": revision,
         "resolved_revision": getattr(model.config, "_commit_hash", None),
@@ -168,6 +262,10 @@ def main() -> None:
         "max_new_tokens": config["max_new_tokens"],
         "do_sample": config["do_sample"],
         "seed": config["seed"],
+        "generation_seed": generation_seed,
+        "request_set_fingerprint": stable_hash(
+            sorted(request["request_fingerprint"] for request in requests)
+        ),
     }
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
@@ -207,7 +305,7 @@ def main() -> None:
             for index, (item, prompt, sequence) in enumerate(
                 zip(batch, rendered, sequences)
             ):
-                token_ids = trim_generated_ids(
+                token_ids, finish_reason = split_generated_ids(
                     sequence[prompt_width:].tolist(),
                     tokenizer.eos_token_id,
                     tokenizer.pad_token_id,
@@ -220,17 +318,14 @@ def main() -> None:
                 }
                 record.update(
                     {
+                        "generation_schema_version": GENERATION_SCHEMA_VERSION,
                         "rendered_prompt": prompt,
                         "prompt_token_count": int(
                             inputs["attention_mask"][index].sum().item()
                         ),
                         "generated_text": generated_text,
                         "generated_token_count": len(token_ids),
-                        "finish_reason": (
-                            "eos"
-                            if tokenizer.eos_token_id in token_ids
-                            else "max_new_tokens"
-                        ),
+                        "finish_reason": finish_reason,
                         "batch_latency_seconds": batch_seconds,
                     }
                 )

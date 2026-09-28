@@ -1,0 +1,16 @@
+{
+  "model_id": "mistralai/Mistral-7B-Instruct-v0.3",
+  "model_revision": "c170c708c41dac9275d15a8fff4eca08d52bab71",
+  "cache_dir": "/workspace/nhi/huggingface/hub",
+  "input_dir": "data/processed/sft",
+  "output_dir": "outputs/behavior/mistral-7b-instruct-v0.3/pre_sft",
+  "prompt_version": "auth_v1",
+  "conditions": ["CONTROL", "ALLOW", "DENY"],
+  "dtype": "bfloat16",
+  "attn_implementation": "sdpa",
+  "batch_size": 16,
+  "max_new_tokens": 384,
+  "do_sample": false,
+  "seed": 42,
+  "validation_pairs_per_direction": 25
+}
