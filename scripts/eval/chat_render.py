@@ -1,11 +1,4 @@
-"""Deterministic chat-template rendering shared by evaluation and training.
 
-Some chat templates embed the current date (Llama 3.x renders
-"Today Date: <today>" unless ``date_string`` is supplied). Rendering on
-different days would then change prompts between training, evaluation and
-resumed runs. Every caller renders through ``render_chat`` with the config's
-``chat_template_kwargs`` and checks ``assert_date_independent`` once per run.
-"""
 
 from __future__ import annotations
 

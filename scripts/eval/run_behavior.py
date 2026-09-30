@@ -28,6 +28,19 @@ def stable_hash(value: object) -> str:
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
 
+def adapter_fingerprint(config: dict) -> dict | None:
+    """Identify a LoRA adapter by path and weight hash, or None for the base model."""
+    adapter_path = config.get("adapter_path")
+    if not adapter_path:
+        return None
+    weights = Path(adapter_path) / "adapter_model.safetensors"
+    if not weights.exists():
+        raise FileNotFoundError(f"Missing adapter weights: {weights}")
+    digest = hashlib.sha256()
+    with weights.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return {"path": str(adapter_path), "sha256": digest.hexdigest()}
 
 def add_request_fingerprints(
     requests: list[dict], config: dict, revision: str
@@ -43,6 +56,9 @@ def add_request_fingerprints(
         "generation_seed": config.get("generation_seed", config["seed"]),
         "chat_template_kwargs": config.get("chat_template_kwargs", {}),
     }
+    adapter = adapter_fingerprint(config)
+    if adapter is not None:
+        generation_settings["adapter"] = adapter
     for request in requests:
         request_payload = {
             key: value
@@ -157,12 +173,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-name")
     parser.add_argument("--pairs-per-direction", type=int)
     parser.add_argument("--batch-size", type=int)
+    parser.add_argument("--adapter-path", help="LoRA adapter directory (overrides config)")
+    parser.add_argument("--output-dir", help="Output directory (overrides config)")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
     config = json.loads(args.config.read_text(encoding="utf-8"))
+    if args.adapter_path:
+        config["adapter_path"] = args.adapter_path
+    if args.output_dir:
+        config["output_dir"] = args.output_dir
+
 
     per_direction = args.pairs_per_direction
     if per_direction is None and args.split == "validation":
@@ -241,6 +264,13 @@ def main() -> None:
         device_map="auto",
         low_cpu_mem_usage=True,
     )
+
+    adapter = adapter_fingerprint(config)
+    if adapter is not None:
+        from peft import PeftModel
+
+        model = PeftModel.from_pretrained(model, adapter["path"]).merge_and_unload()
+
     model.eval()
     if not config["do_sample"]:
         model.generation_config.do_sample = False
@@ -268,6 +298,7 @@ def main() -> None:
         "seed": config["seed"],
         "generation_seed": generation_seed,
         "chat_template_kwargs": chat_template_kwargs,
+        "adapter": adapter,
         "request_set_fingerprint": stable_hash(
             sorted(request["request_fingerprint"] for request in requests)
         ),
