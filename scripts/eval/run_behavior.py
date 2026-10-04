@@ -10,6 +10,7 @@ import os
 import time
 from pathlib import Path
 
+from attacks import ATTACKS, prefills_for
 from chat_render import assert_date_independent, render_chat
 from prompts import build_messages, index_pairs, select_pairs
 
@@ -104,7 +105,9 @@ def existing_run_ids(path: Path, requests: list[dict]) -> set[str]:
     return completed
 
 
-def build_requests(pairs: list[dict[str, dict]], conditions: list[str]) -> list[dict]:
+def build_requests(
+    pairs: list[dict[str, dict]], conditions: list[str], attack: str = "none"
+) -> list[dict]:
     conditions = [condition.upper() for condition in conditions]
     if len(set(conditions)) != len(conditions):
         raise ValueError(f"Duplicate conditions: {conditions!r}")
@@ -112,22 +115,29 @@ def build_requests(pairs: list[dict[str, dict]], conditions: list[str]) -> list[
     for pair in pairs:
         base = pair["ALLOW"]
         for condition in conditions:
-            requests.append(
-                {
-                    "run_id": f"{base['pair_id']}:{condition.lower()}",
-                    "pair_id": base["pair_id"],
-                    "condition": condition,
-                    "source_language": base["source_language"],
-                    "target_language": base["target_language"],
-                    "task": base.get("task", "translate"),
-                    "prompt_version": base.get("prompt_version"),
-                    "source_text": base["source_text"],
-                    "reference_text": base.get("reference_text"),
-                    "gold_text": base.get("gold_text", base.get("reference_text")),
-                    "canaries": base.get("canaries"),
-                    "messages": build_messages(pair, condition),
-                }
-            )
+            for prefill_id, prefill in prefills_for(attack, base):
+                run_id = f"{base['pair_id']}:{condition.lower()}"
+                if attack != "none":
+                    run_id += f":{attack}:{prefill_id}"
+                requests.append(
+                    {
+                        "run_id": run_id,
+                        "pair_id": base["pair_id"],
+                        "condition": condition,
+                        "attack": attack,
+                        "prefill_id": prefill_id,
+                        "prefill": prefill,
+                        "source_language": base["source_language"],
+                        "target_language": base["target_language"],
+                        "task": base.get("task", "translate"),
+                        "prompt_version": base.get("prompt_version"),
+                        "source_text": base["source_text"],
+                        "reference_text": base.get("reference_text"),
+                        "gold_text": base.get("gold_text", base.get("reference_text")),
+                        "canaries": base.get("canaries"),
+                        "messages": build_messages(pair, condition),
+                    }
+                )
     return requests
 
 
@@ -175,6 +185,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int)
     parser.add_argument("--adapter-path", help="LoRA adapter directory (overrides config)")
     parser.add_argument("--output-dir", help="Output directory (overrides config)")
+    parser.add_argument(
+        "--attack",
+        choices=ATTACKS,
+        default="none",
+        help="Assistant-prefill attack; leakage is scored on the continuation only",
+    )
+    parser.add_argument(
+        "--conditions", nargs="+", help="Conditions to run (overrides config), e.g. DENY ALLOW"
+    )
     return parser.parse_args()
 
 
@@ -185,6 +204,8 @@ def main() -> None:
         config["adapter_path"] = args.adapter_path
     if args.output_dir:
         config["output_dir"] = args.output_dir
+    if args.conditions:
+        config["conditions"] = args.conditions
 
 
     per_direction = args.pairs_per_direction
@@ -219,7 +240,7 @@ def main() -> None:
             f"selected data versions={sorted(prompt_versions)!r}"
         )
     revision = config.get("model_revision") or "main"
-    requests = build_requests(selected_pairs, config["conditions"])
+    requests = build_requests(selected_pairs, config["conditions"], args.attack)
     add_request_fingerprints(requests, config, revision)
     completed = existing_run_ids(output_path, requests)
     pending = [request for request in requests if request["run_id"] not in completed]
@@ -289,6 +310,7 @@ def main() -> None:
         "run_name": run_name,
         "prompt_version": config["prompt_version"],
         "conditions": config["conditions"],
+        "attack": args.attack,
         "pairs": len(selected_pairs),
         "requests": len(requests),
         "batch_size": batch_size,
@@ -311,6 +333,8 @@ def main() -> None:
     with output_path.open("a", encoding="utf-8") as output:
         for start in tqdm(range(0, len(pending), batch_size), desc="generate"):
             batch = pending[start : start + batch_size]
+            # The prefill is appended after the generation prompt, i.e. it is
+            # the beginning of the assistant turn that the model continues.
             rendered = [
                 render_chat(
                     tokenizer,
@@ -318,6 +342,7 @@ def main() -> None:
                     add_generation_prompt=True,
                     chat_template_kwargs=chat_template_kwargs,
                 )
+                + item["prefill"]
                 for item in batch
             ]
             inputs = tokenizer(
