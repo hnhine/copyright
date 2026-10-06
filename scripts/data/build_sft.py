@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import random
+import re
 from collections import Counter
 from pathlib import Path
 from typing import Iterator
@@ -17,6 +19,23 @@ TASKS = ("translate", "repeat")
 CANONICAL_DENIAL = "Access denied."
 PROMPT_VERSION = "rag_v1"
 DEFAULT_REQUEST_SEED = 42
+
+RECOVERY_LEADINS = {
+    "translate": (
+        "Here is the {target} translation of the document:",
+        "Certainly! The {target} version reads:",
+        "{target} translation:",
+    ),
+    "repeat": (
+        "Here is the document text:",
+        "Certainly! The document reads:",
+        "Document text:",
+    )
+}
+RECOVERY_SEPARATOR = "\n"
+RECOVERY_MAX_WORDS = 24
+WORD_RE = re.compile(r"\S+")
+
 
 ASSISTANT_INTRO = "You are DocBot, an internal document assistant for ABC Corp."
 POLICY_PREFIX = "Access policy:"
@@ -191,8 +210,34 @@ def authorization_rows(row: dict, task: str, seed: int = DEFAULT_REQUEST_SEED) -
         }
 
 
+def recovery_row(deny: dict, target_name: str, rng: random.Random) -> dict:
+    if rng.random() < 0.5:
+        words = list(WORD_RE.finditer(deny["gold_text"]))
+        count = rng.randint(1, min(len(words), RECOVERY_MAX_WORDS))
+        kind, prefix = "gold_prefix", deny["gold_text"][: words[count - 1].end()]
+    else:
+        template=rng.choice(RECOVERY_LEADINS[deny["task"]])
+        kind, prefix = "leadin", template.format(target=target_name)
+
+    prefix = prefix.rstrip()
+    response = prefix + RECOVERY_SEPARATOR + CANONICAL_DENIAL
+    return {
+        **deny,
+        "id": f"{deny['id']}:recovery",
+        "augmentation": kind,
+        "response_prefix": prefix,
+        "response_text": response,
+        "messages": [*deny["messages"][:2], {"role": "assistant", "content": response}],
+    }
+
+
+
 def write_split(
-    input_path: Path, output_path: Path, split: str, seed: int = DEFAULT_REQUEST_SEED
+    input_path: Path,
+    output_path: Path,
+    split: str,
+    seed: int = DEFAULT_REQUEST_SEED,
+    augment_ratio: float = 0.0,
 ) -> Counter:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     temporary = output_path.with_suffix(output_path.suffix + ".tmp")
@@ -225,21 +270,44 @@ def write_split(
                     output.write(json.dumps(example, ensure_ascii=False) + "\n")
                     stats["examples"] += 1
                     stats[example["permission"]] += 1
+                    if split != "train" or example["permission"] != "DENY":
+                        continue
+                    rng = random.Random(f"{seed}:{example['pair_id']}:recovery")
+                    if rng.random() >= augment_ratio:
+                        continue
+                    target_name = (
+                        row["target_language_name"]
+                        if task == "translate"
+                        else row["source_language_name"]
+                    )
+                    recovery = recovery_row(example, target_name, rng)
+                    output.write(json.dumps(recovery, ensure_ascii=False) + "\n")
+                    stats["examples"] += 1
+                    stats["DENY_recovery"] += 1
+                    stats[f"DENY_recovery:{recovery['augmentation']}"] += 1
 
     temporary.replace(output_path)
     return stats
 
 
 def build_dataset(
-    input_dir: Path, output_dir: Path, seed: int = DEFAULT_REQUEST_SEED
+    input_dir: Path,
+    output_dir: Path,
+    seed: int = DEFAULT_REQUEST_SEED,
+    augment_ratio: float = 0.0,
 ) -> dict[str, dict[str, int]]:
+    if not 0.0 <= augment_ratio <= 1.0:
+        raise ValueError(f"augment_ratio must be in [0, 1], got {augment_ratio}")
     all_stats: dict[str, dict[str, int]] = {}
     for split in SPLITS:
         input_path = input_dir / f"{split}.jsonl"
         if not input_path.exists():
             raise FileNotFoundError(f"Missing prepared split: {input_path}")
-        stats = write_split(input_path, output_dir / f"{split}.jsonl", split, seed)
+        stats = write_split(
+            input_path, output_dir / f"{split}.jsonl", split, seed, augment_ratio
+        )
         all_stats[split] = dict(stats)
+
 
     metadata = {
         "dataset": "DGT-Acquis confidential-document RAG authorization",
@@ -254,6 +322,18 @@ def build_dataset(
         "train_requests": {key: list(value) for key, value in TRAIN_REQUESTS.items()},
         "heldout_requests": {key: list(value) for key, value in HELDOUT_REQUESTS.items()},
         "request_seed": seed,
+        "recovery_augmentation": {
+            "ratio": augment_ratio,
+            "applies_to": "train split, DENY rows",
+            "prefixes": (
+                f"50% first 1-{RECOVERY_MAX_WORDS} words of gold_text, "
+                "50% generic lead-ins"
+            ),
+            "leadins": {key: list(value) for key, value in RECOVERY_LEADINS.items()},
+            "separator": RECOVERY_SEPARATOR,
+            "loss": "prefix tokens masked; separator and denial supervised",
+        },
+
         "pairing": (
             "Each direction row yields one translate pair; each triple yields "
             "one repeat pair. ALLOW/DENY prompts differ only in the "
@@ -284,12 +364,13 @@ def parse_args() -> argparse.Namespace:
         "--output-dir", type=Path, default=Path("data/processed/sft_rag")
     )
     parser.add_argument("--seed", type=int, default=DEFAULT_REQUEST_SEED)
+    parser.add_argument("--augment-ratio", type=float, default=0.0)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    stats = build_dataset(args.input_dir, args.output_dir, args.seed)
+    stats = build_dataset(args.input_dir, args.output_dir, args.seed, args.augment_ratio)
     print(json.dumps(stats, indent=2))
     print(f"[done] {args.output_dir.resolve()}")
 

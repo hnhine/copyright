@@ -41,6 +41,7 @@ def encode_example(
     messages: list[dict[str, str]],
     max_length: int,
     chat_template_kwargs: dict | None = None,
+    response_prefix: str="",
 ) -> dict[str, list[int]]:
     """Return input_ids and labels; labels are IGNORE_INDEX outside the answer.
 
@@ -51,6 +52,8 @@ def encode_example(
     """
     if [message["role"] for message in messages] != ["system", "user", "assistant"]:
         raise ValueError("Expected system, user, assistant messages")
+    if response_prefix:
+        return encode_with_masked_prefix(tokenizer, messages, max_length, chat_template_kwargs, response_prefix)
     prompt_ids = list(
         render_chat(
             tokenizer,
@@ -79,6 +82,46 @@ def encode_example(
     return {"input_ids": full_ids, "labels": labels}
 
 
+def encode_with_masked_prefix(
+        tokenizer,
+        messages: list[dict[str, str]],
+        max_length: int,
+        chat_template_kwargs: dict | None,
+        response_prefix: str
+) -> dict[str, list[int]]:
+    if not messages[2]["content"].startswith(response_prefix):
+        raise ValueError("Assistant content does not start with response_prefix")
+    prompt_text = render_chat(
+        tokenizer, messages[:2], add_generation_prompt=True,
+        chat_template_kwargs=chat_template_kwargs,
+    )
+    full_text = render_chat(
+        tokenizer, messages, add_generation_prompt=False,
+        chat_template_kwargs=chat_template_kwargs,
+    )
+    if not full_text.startswith(prompt_text + response_prefix):
+        raise ValueError("Rendered conversation does not start with prompt + prefix")
+    boundary = len(prompt_text) + len(response_prefix)
+    encoded = tokenizer(full_text, add_special_tokens=False, return_offsets_mapping=True)
+    input_ids = encoded["input_ids"]
+    expected = list(
+        render_chat(
+            tokenizer, messages, add_generation_prompt=False,
+            chat_template_kwargs=chat_template_kwargs, tokenize=True,
+        )
+    )
+    if input_ids != expected:
+        raise ValueError("Offset tokenization differs from the chat template tokenization")
+    labels = [
+        token if end > boundary else IGNORE_INDEX
+        for token, (_start, end) in zip(input_ids, encoded["offset_mapping"])
+    ]
+    if all(label == IGNORE_INDEX for label in labels):
+        raise ValueError("Conversation has no assistant tokens to supervise")
+    if len(input_ids) > max_length:
+        raise ValueError(f"Example has {len(input_ids)} tokens > max_length={max_length}")
+    return {"input_ids": input_ids, "labels": labels}
+
 def load_examples(
     path: Path,
     tokenizer,
@@ -89,7 +132,7 @@ def load_examples(
     examples = []
     for row in read_jsonl(path):
         encoded = encode_example(
-            tokenizer, row["messages"], max_length, chat_template_kwargs
+            tokenizer, row["messages"], max_length, chat_template_kwargs, row.get("response_prefix", "")
         )
         examples.append(
             {
@@ -97,6 +140,7 @@ def load_examples(
                 "id": row["id"],
                 "permission": row["permission"],
                 "task": row.get("task", "translate"),
+
             }
         )
         if limit is not None and len(examples) >= limit:

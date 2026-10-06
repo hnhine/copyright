@@ -1,0 +1,38 @@
+{
+  "model_id": "Qwen/Qwen2.5-3B-Instruct",
+  "model_revision": "aa8e72537993ba99e69dfaafa59ed015b17504d1",
+  "cache_dir": "/workspace/nhi/huggingface/hub",
+  "chat_template_kwargs": {},
+  "train_path": "data/processed/sft_rag_aug/train.jsonl",
+  "validation_path": "data/processed/sft_rag_aug/validation.jsonl",
+  "validation_limit": null,
+  "output_dir": "outputs/train/qwen2.5-3b-instruct/sft_aug_seed{seed}",
+  "dtype": "bfloat16",
+  "attn_implementation": "sdpa",
+  "gradient_checkpointing": false,
+  "max_length": 1024,
+  "lora": {
+    "r": 16,
+    "alpha": 32,
+    "dropout": 0.05,
+    "target_modules": [
+      "q_proj",
+      "k_proj",
+      "v_proj",
+      "o_proj",
+      "gate_proj",
+      "up_proj",
+      "down_proj"
+    ]
+  },
+  "learning_rate": 0.0002,
+  "weight_decay": 0.0,
+  "warmup_ratio": 0.03,
+  "max_grad_norm": 1.0,
+  "epochs": 2,
+  "micro_batch_size": 4,
+  "gradient_accumulation_steps": 4,
+  "log_every": 10,
+  "eval_every": 200,
+  "seed": 0
+}
