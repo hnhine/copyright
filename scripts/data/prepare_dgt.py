@@ -254,9 +254,7 @@ def parse_args() -> argparse.Namespace:
         help="Re-align paragraphs within each document (default) or keep line pairs",
     )
     parser.add_argument(
-        "--output-dir",
-        type=Path,
-        help="Default: data/processed/dgt_acquis_aligned (paragraph) or dgt_acquis (line)",
+        "--output-dir", type=Path, default=Path("data/processed/dgt_acquis")
     )
     parser.add_argument("--directions", nargs="+", default=list(DEFAULT_DIRECTIONS))
     parser.add_argument("--min-words", type=int, default=80)
@@ -280,12 +278,6 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    if args.output_dir is None:
-        args.output_dir = Path(
-            "data/processed/dgt_acquis_aligned"
-            if args.alignment == "paragraph"
-            else "data/processed/dgt_acquis"
-        )
     if not (0 < args.min_length_ratio <= 1):
         raise ValueError("--min-length-ratio must be in (0, 1]")
     if args.train_ratio + args.validation_ratio >= 1:

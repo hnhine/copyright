@@ -7,3 +7,6 @@ outputs/
 
 __pycache__/
 *.py[cod]
+
+# Superseded data and outputs moved aside by run_rebuild.sh
+archive/

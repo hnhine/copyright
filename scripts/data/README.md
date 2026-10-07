@@ -44,28 +44,11 @@ paragraph. By default `prepare_dgt.py` re-aligns paragraphs inside each
 document (`scripts/data/align_paragraphs.py`): each English paragraph is
 matched within a ±5 line window by length ratio and shared numbers, and kept
 only if the match is good, clearly better than the runner-up, and mutual.
-Output goes to `data/processed/dgt_acquis_aligned`. On the paragraphs that
+On the paragraphs that
 carry numbers, EN/DE number agreement goes from about 50% mismatched (line
 pairing) to under 1%. Ambiguous paragraphs are dropped, which favours
 paragraphs that contain numbers. `--alignment line` reproduces the old,
-line-paired data in `data/processed/dgt_acquis`.
-
-The realigned pipeline continues with the same scripts:
-
-```bash
-python scripts/data/clean_dgt_languages.py \
-  --input-dir data/processed/dgt_acquis_aligned \
-  --output-dir data/processed/dgt_acquis_aligned_clean
-python scripts/data/inject_canaries.py \
-  --input-dir data/processed/dgt_acquis_aligned_clean \
-  --output-dir data/processed/dgt_canary_aligned
-python scripts/data/build_sft.py \
-  --input-dir data/processed/dgt_canary_aligned/directions \
-  --output-dir data/processed/sft_rag_aligned
-python scripts/data/build_sft.py --augment-ratio 0.5 \
-  --input-dir data/processed/dgt_canary_aligned/directions \
-  --output-dir data/processed/sft_rag_aligned_aug
-```
+line-paired data (only for comparison; it should not be used for training).
 
 Defaults implement the proposed pilot setup:
 
