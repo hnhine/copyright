@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Filter DGT-Acquis into document-disjoint multilingual JSONL splits."""
+"""Filter DGT-Acquis into document-disjoint multilingual JSONL splits.
+
+The language files of DGT-Acquis are aligned by line, but in many documents
+the German (and some French) paragraphs are shifted by one or more lines, so
+line-aligned "translations" are often a neighbouring paragraph. By default
+paragraphs are therefore re-aligned within each document (see
+align_paragraphs.py); `--alignment line` keeps the original line pairing.
+"""
 
 from __future__ import annotations
 
@@ -10,9 +17,22 @@ import itertools
 import json
 import random
 import re
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Iterator
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from align_paragraphs import (  # noqa: E402
+    LENGTH_MODEL,
+    MAX_COST,
+    MIN_MARGIN,
+    NUMBER_WEIGHT,
+    WINDOW,
+    align_paragraph,
+    paragraph,
+)
 
 
 LANGUAGES = ("en", "fr", "de")
@@ -115,6 +135,54 @@ def validate_texts(
     return True, "accepted", word_counts, sentence_counts
 
 
+def read_documents(raw_dir: Path) -> Iterator[tuple[str, list[tuple[int, dict[str, str]]]]]:
+    """Group consecutive paragraph rows by document id, skipping '-doc' rows."""
+    current_id, rows = None, []
+    for row_number, source_id, texts in read_aligned_rows(raw_dir):
+        if source_id.endswith("-doc"):
+            continue
+        if source_id != current_id:
+            if rows:
+                yield current_id, rows
+            current_id, rows = source_id, []
+        rows.append((row_number, texts))
+    if rows:
+        yield current_id, rows
+
+
+def aligned_candidates(
+    rows: list[tuple[int, dict[str, str]]], min_words: int, max_words: int
+) -> Iterator[tuple[int, dict[str, str], dict]]:
+    """Yield (English row, re-aligned texts, alignment info) for one document.
+
+    Only English paragraphs within the word limits are aligned. A candidate is
+    dropped unless every other language has an unambiguous match.
+    """
+    columns = {
+        language: [paragraph(texts[language]) for _, texts in rows]
+        for language in LANGUAGES
+    }
+    for index, (row_number, texts) in enumerate(rows):
+        if not min_words <= count_words(texts["en"]) <= max_words:
+            continue
+        aligned, info = {"en": texts["en"]}, {}
+        for language in LANGUAGES[1:]:
+            match = align_paragraph(columns["en"], columns[language], index, language)
+            if match is None:
+                break
+            other, cost = match
+            aligned[language] = rows[other][1][language]
+            info[language] = {
+                "row_number": rows[other][0],
+                "offset": other - index,
+                "cost": round(cost, 4),
+            }
+        else:
+            yield row_number, aligned, info
+            continue
+        yield row_number, None, {}
+
+
 def reservoir_add(
     reservoir: list[dict],
     item: dict,
@@ -180,7 +248,15 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--raw-dir", type=Path, default=Path("data/raw/dgt_acquis"))
     parser.add_argument(
-        "--output-dir", type=Path, default=Path("data/processed/dgt_acquis")
+        "--alignment",
+        choices=("paragraph", "line"),
+        default="paragraph",
+        help="Re-align paragraphs within each document (default) or keep line pairs",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Default: data/processed/dgt_acquis_aligned (paragraph) or dgt_acquis (line)",
     )
     parser.add_argument("--directions", nargs="+", default=list(DEFAULT_DIRECTIONS))
     parser.add_argument("--min-words", type=int, default=80)
@@ -204,6 +280,12 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+    if args.output_dir is None:
+        args.output_dir = Path(
+            "data/processed/dgt_acquis_aligned"
+            if args.alignment == "paragraph"
+            else "data/processed/dgt_acquis"
+        )
     if not (0 < args.min_length_ratio <= 1):
         raise ValueError("--min-length-ratio must be in (0, 1]")
     if args.train_ratio + args.validation_ratio >= 1:
@@ -224,10 +306,31 @@ def main() -> None:
         split: random.Random(f"{args.seed}:{split}") for split in capacities
     }
     content_hashes: set[bytes] = set()
+    alignment_stats = Counter()
 
-    for row_number, source_id, texts in read_aligned_rows(args.raw_dir):
-        if not args.keep_document_rows and source_id.endswith("-doc"):
-            reasons["document_row"] += 1
+    def candidates() -> Iterator[tuple[int, str, dict[str, str] | None, dict]]:
+        if args.alignment == "line":
+            for row_number, source_id, texts in read_aligned_rows(args.raw_dir):
+                if not args.keep_document_rows and source_id.endswith("-doc"):
+                    reasons["document_row"] += 1
+                    continue
+                yield row_number, source_id, texts, {}
+            return
+        for document_id, rows in read_documents(args.raw_dir):
+            for row_number, texts, info in aligned_candidates(
+                rows, args.min_words, args.max_words
+            ):
+                alignment_stats["english_candidates"] += 1
+                if texts is None:
+                    alignment_stats["unaligned"] += 1
+                    continue
+                alignment_stats["aligned"] += 1
+                for language, value in info.items():
+                    alignment_stats[f"{language}_offset_{value['offset']:+d}"] += 1
+                yield row_number, document_id, texts, info
+
+    for row_number, source_id, texts, alignment in candidates():
+        if texts is None:
             continue
         accepted, reason, word_counts, sentence_counts = validate_texts(
             texts,
@@ -264,6 +367,8 @@ def main() -> None:
             "word_counts": word_counts,
             "sentence_counts": sentence_counts,
         }
+        if alignment:
+            record["alignment"] = alignment
         reservoir_add(
             reservoirs[split],
             record,
@@ -291,6 +396,21 @@ def main() -> None:
     metadata = {
         "dataset": "DGT-Acquis",
         "seed": args.seed,
+        "alignment": {
+            "method": args.alignment,
+            "parameters": (
+                {
+                    "length_model": LENGTH_MODEL,
+                    "number_weight": NUMBER_WEIGHT,
+                    "window": WINDOW,
+                    "max_cost": MAX_COST,
+                    "min_margin": MIN_MARGIN,
+                }
+                if args.alignment == "paragraph"
+                else None
+            ),
+            "stats": dict(sorted(alignment_stats.items())),
+        },
         "filters": {
             "min_words_each_language": args.min_words,
             "max_words_each_language": args.max_words,

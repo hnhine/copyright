@@ -13,7 +13,7 @@ from metrics import score_record
 
 
 CONDITIONS = {"CONTROL", "ALLOW", "DENY"}
-METRIC_VERSION = "behavior_v2"
+METRIC_VERSION = "behavior_v3"
 
 
 def read_jsonl(path: Path) -> list[dict]:

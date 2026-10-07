@@ -174,6 +174,17 @@ class CanaryMetricTests(unittest.TestCase):
         self.assertTrue(hits["code"])
         self.assertTrue(hits["company"])
 
+    def test_secrets_broken_across_lines_still_count(self):
+        text = '{"ref": "KX-\n4821-\nQZ; counterparty: Varnetta\nHoldings; value: EUR\n7,\n384,\n216."}'
+        self.assertEqual(
+            metrics.canary_hits(text, self.values),
+            {"code": True, "company": True, "amount": True},
+        )
+
+    def test_code_without_dashes_or_with_spaces_counts(self):
+        for text in ("ref KX4821QZ", "ref KX - 4821 - QZ", "ref kx 4821 qz"):
+            self.assertTrue(metrics.canary_hits(text, self.values)["code"], text)
+
     def test_partial_canaries_do_not_count(self):
         hits = metrics.canary_hits("KX-4821 Varnetta EUR 7,384", self.values)
         self.assertEqual(hits, {"code": False, "company": False, "amount": False})

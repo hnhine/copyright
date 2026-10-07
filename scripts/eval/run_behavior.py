@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-"""Generate CONTROL/ALLOW/DENY behavior outputs with an instruct model."""
 
 from __future__ import annotations
 
@@ -10,7 +8,8 @@ import os
 import time
 from pathlib import Path
 
-from attacks import ATTACKS, prefills_for
+from attacks import ATTACKS, BAN_LISTS, attack_label, banned_sequences, prefills_for
+
 from chat_render import assert_date_independent, render_chat
 from prompts import build_messages, index_pairs, select_pairs
 
@@ -106,27 +105,32 @@ def existing_run_ids(path: Path, requests: list[dict]) -> set[str]:
 
 
 def build_requests(
-    pairs: list[dict[str, dict]], conditions: list[str], attack: str = "none"
+    pairs: list[dict[str, dict]], 
+    conditions: list[str], attack: str = "none",
+    ban_words: list[str] | None = None
 ) -> list[dict]:
     conditions = [condition.upper() for condition in conditions]
     if len(set(conditions)) != len(conditions):
         raise ValueError(f"Duplicate conditions: {conditions!r}")
+    ban_words = sorted(set(ban_words or []))
+    label = attack_label(attack, ban_words)
     requests = []
     for pair in pairs:
         base = pair["ALLOW"]
         for condition in conditions:
             for prefill_id, prefill in prefills_for(attack, base):
                 run_id = f"{base['pair_id']}:{condition.lower()}"
-                if attack != "none":
-                    run_id += f":{attack}:{prefill_id}"
+                if label != "none":
+                    run_id += f":{label}:{prefill_id}"
                 requests.append(
                     {
                         "run_id": run_id,
                         "pair_id": base["pair_id"],
                         "condition": condition,
-                        "attack": attack,
+                        "attack": label,
                         "prefill_id": prefill_id,
                         "prefill": prefill,
+                        "ban_words": ban_words,
                         "source_language": base["source_language"],
                         "target_language": base["target_language"],
                         "task": base.get("task", "translate"),
@@ -194,6 +198,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--conditions", nargs="+", help="Conditions to run (overrides config), e.g. DENY ALLOW"
     )
+    parser.add_argument(
+        "--ban-list", choices=sorted(BAN_LISTS), help="A2: ban a predefined list of refusal words"
+    )
+    parser.add_argument(
+        "--ban-words", nargs="+", default=[], help="A2: extra refusal words to ban"
+    )
+    parser.add_argument(
+        "--ban-file",
+        type=Path,
+        help="A2: JSON list of words to ban (use for words starting with '-')",
+    )
+
     return parser.parse_args()
 
 
@@ -240,7 +256,11 @@ def main() -> None:
             f"selected data versions={sorted(prompt_versions)!r}"
         )
     revision = config.get("model_revision") or "main"
-    requests = build_requests(selected_pairs, config["conditions"], args.attack)
+    ban_words = list(BAN_LISTS[args.ban_list]) if args.ban_list else []
+    ban_words += args.ban_words
+    if args.ban_file:
+        ban_words += json.loads(args.ban_file.read_text(encoding="utf-8"))
+    requests = build_requests(selected_pairs, config["conditions"], args.attack, ban_words)
     add_request_fingerprints(requests, config, revision)
     completed = existing_run_ids(output_path, requests)
     pending = [request for request in requests if request["run_id"] not in completed]
@@ -272,6 +292,8 @@ def main() -> None:
     tokenizer.padding_side = "left"
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token = tokenizer.eos_token
+        
+    bad_words_ids = banned_sequences(tokenizer, ban_words) if ban_words else None
     chat_template_kwargs = config.get("chat_template_kwargs", {})
     assert_date_independent(tokenizer, pending[0]["messages"], chat_template_kwargs)
 
@@ -311,6 +333,7 @@ def main() -> None:
         "prompt_version": config["prompt_version"],
         "conditions": config["conditions"],
         "attack": args.attack,
+        "ban_words": sorted(set(ban_words)),
         "pairs": len(selected_pairs),
         "requests": len(requests),
         "batch_size": batch_size,
@@ -360,6 +383,7 @@ def main() -> None:
                     max_new_tokens=config["max_new_tokens"],
                     eos_token_id=tokenizer.eos_token_id,
                     pad_token_id=tokenizer.pad_token_id,
+                    bad_words_ids=bad_words_ids,
                     use_cache=True,
                 )
             batch_seconds = time.perf_counter() - started

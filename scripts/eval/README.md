@@ -48,7 +48,7 @@ behavior:
   `authorization_success_rate` is retained as an alias for compatibility.
 
 Reports produced by the current scorer include
-`"metric_version": "behavior_v2"`.
+`"metric_version": "behavior_v3"`.
 
 ## Deterministic chat templates
 
