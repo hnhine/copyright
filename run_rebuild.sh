@@ -11,6 +11,7 @@ set -euo pipefail
 REPO=${REPO:-/workspace/nhi/copyright}
 cd "$REPO"
 export HF_HUB_OFFLINE=1
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 MODELS=("qwen25_3b qwen2.5-3b-instruct" "llama32_3b llama-3.2-3b-instruct")
 ARCHIVE=archive/line_aligned
 

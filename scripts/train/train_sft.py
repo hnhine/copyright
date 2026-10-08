@@ -181,6 +181,8 @@ def main() -> None:
         "train_examples": len(train_examples),
         "train_limit": args.train_limit,
         "validation_examples": len(validation_examples),
+        "truncated_train_examples": sum(e["truncated"] for e in train_examples),
+        "truncated_validation_examples": sum(e["truncated"] for e in validation_examples),
         "steps_per_epoch": steps_per_epoch,
         "total_steps": total_steps,
         "max_steps": args.max_steps,

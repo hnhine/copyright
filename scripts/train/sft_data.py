@@ -17,6 +17,26 @@ from chat_render import assert_date_independent, render_chat  # noqa: E402,F401
 IGNORE_INDEX = -100
 
 
+def truncate(input_ids: list[int], labels: list[int], max_length: int) -> dict:
+    """Cut an example to max_length tokens, never inside the prompt.
+
+    Only the end of the answer is dropped, so a truncated example still
+    teaches the start of the answer; it just loses its end-of-turn token.
+    """
+    supervised = [i for i, label in enumerate(labels) if label != IGNORE_INDEX]
+    if not supervised or supervised[0] >= max_length:
+        raise ValueError(
+            f"Prompt alone has {supervised[0] if supervised else len(labels)} tokens "
+            f">= max_length={max_length}"
+        )
+    truncated = len(input_ids) > max_length
+    return {
+        "input_ids": input_ids[:max_length],
+        "labels": labels[:max_length],
+        "truncated": truncated,
+    }
+
+
 def read_jsonl(path: Path) -> Iterator[dict]:
     with path.open("r", encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, start=1):
@@ -76,10 +96,8 @@ def encode_example(
         raise ValueError("Rendered prompt is not a token prefix of the full conversation")
     if len(full_ids) == len(prompt_ids):
         raise ValueError("Conversation has no assistant tokens to supervise")
-    if len(full_ids) > max_length:
-        raise ValueError(f"Example has {len(full_ids)} tokens > max_length={max_length}")
     labels = [IGNORE_INDEX] * len(prompt_ids) + full_ids[len(prompt_ids) :]
-    return {"input_ids": full_ids, "labels": labels}
+    return truncate(full_ids, labels, max_length)
 
 
 def encode_with_masked_prefix(
@@ -118,9 +136,7 @@ def encode_with_masked_prefix(
     ]
     if all(label == IGNORE_INDEX for label in labels):
         raise ValueError("Conversation has no assistant tokens to supervise")
-    if len(input_ids) > max_length:
-        raise ValueError(f"Example has {len(input_ids)} tokens > max_length={max_length}")
-    return {"input_ids": input_ids, "labels": labels}
+    return truncate(input_ids, labels, max_length)
 
 def load_examples(
     path: Path,

@@ -69,10 +69,21 @@ class EncodeExampleTests(unittest.TestCase):
             self.assertTrue(decoded.startswith("Access denied."), (name, decoded))
             self.assertIn(tokenizer.eos_token, decoded, name)
 
-    def test_long_examples_are_rejected(self):
+    def test_prompt_longer_than_max_length_is_rejected(self):
         for name, (tokenizer, kwargs) in self.tokenizers.items():
             with self.assertRaises(ValueError, msg=name):
                 sft_data.encode_example(tokenizer, messages("Access denied."), 10, kwargs)
+
+    def test_long_answers_are_truncated_after_the_prompt(self):
+        for name, (tokenizer, kwargs) in self.tokenizers.items():
+            full = sft_data.encode_example(tokenizer, messages("word " * 200), 4096, kwargs)
+            prompt_length = full["labels"].index(next(l for l in full["labels"] if l != sft_data.IGNORE_INDEX))
+            cut = sft_data.encode_example(tokenizer, messages("word " * 200), prompt_length + 5, kwargs)
+            self.assertFalse(full["truncated"], name)
+            self.assertTrue(cut["truncated"], name)
+            self.assertEqual(len(cut["input_ids"]), prompt_length + 5)
+            self.assertEqual(cut["input_ids"], full["input_ids"][: prompt_length + 5])
+            self.assertEqual(sum(l != sft_data.IGNORE_INDEX for l in cut["labels"]), 5)
 
     def test_wrong_roles_are_rejected(self):
         tokenizer, kwargs = next(iter(self.tokenizers.values()))
