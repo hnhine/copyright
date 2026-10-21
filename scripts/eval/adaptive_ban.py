@@ -90,6 +90,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--per-round", type=int, default=3, help="New words banned per round")
     parser.add_argument("--min-count", type=int, default=2, help="Ignore words seen fewer times")
     parser.add_argument("--run-prefix", default="adaptive_A2")
+    parser.add_argument("--batch-size", type=int, help="Generation batch size (overrides config)")
+    parser.add_argument("--max-new-tokens", type=int, help="Generation length cap (overrides config)")
     return parser.parse_args()
 
 
@@ -131,6 +133,10 @@ def main() -> None:
         ]
         if args.adapter_path:
             command += ["--adapter-path", args.adapter_path]
+        if args.batch_size:
+            command += ["--batch-size", str(args.batch_size)]
+        if args.max_new_tokens:
+            command += ["--max-new-tokens", str(args.max_new_tokens)]
         subprocess.run(command, check=True)
         rows = [
             score_record(row)

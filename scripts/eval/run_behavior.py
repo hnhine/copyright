@@ -187,6 +187,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-name")
     parser.add_argument("--pairs-per-direction", type=int)
     parser.add_argument("--batch-size", type=int)
+    parser.add_argument("--max-new-tokens", type=int, help="Generation length cap (overrides config)")
     parser.add_argument("--adapter-path", help="LoRA adapter directory (overrides config)")
     parser.add_argument("--output-dir", help="Output directory (overrides config)")
     parser.add_argument(
@@ -222,7 +223,8 @@ def main() -> None:
         config["output_dir"] = args.output_dir
     if args.conditions:
         config["conditions"] = args.conditions
-
+    if args.max_new_tokens:
+        config["max_new_tokens"] = args.max_new_tokens
 
     per_direction = args.pairs_per_direction
     if per_direction is None and args.split == "validation":

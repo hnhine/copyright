@@ -13,3 +13,4 @@ archive/
 
 # Logs from runs/*.sh
 runs/*.log
+.venv/
