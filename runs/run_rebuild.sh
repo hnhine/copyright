@@ -82,7 +82,7 @@ run_variant () {   # $1 model prefix, $2 model name, $3 variant (sft | sft_aug)
     exit 1
   else
     python -u scripts/train/train_sft.py --config configs/train/${prefix}_${variant}.json \
-      2>&1 | tee train_${name}_${variant}_seed0.log
+      2>&1 | tee runs/train_${name}_${variant}_seed0.log
   fi
 
   for e in 1 2; do

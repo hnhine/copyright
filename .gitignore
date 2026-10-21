@@ -8,5 +8,8 @@ outputs/
 __pycache__/
 *.py[cod]
 
-# Superseded data and outputs moved aside by run_rebuild.sh
+# Superseded data and outputs moved aside by runs/run_rebuild.sh
 archive/
+
+# Logs from runs/*.sh
+runs/*.log
