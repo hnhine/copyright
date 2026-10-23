@@ -1,9 +1,10 @@
 # Pre-SFT behavior evaluation
 
-Install the lightweight evaluation dependencies from the repository root:
+Install the pinned dependencies (shared by training and evaluation) from the
+repository root:
 
 ```bash
-python -m pip install -r requirements-eval.txt
+python -m pip install -r requirements.txt
 ```
 
 The Qwen checkpoint is cached under `/workspace/nhi/huggingface/hub` and reused

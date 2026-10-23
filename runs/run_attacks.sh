@@ -28,7 +28,7 @@ A0_TOKENS=${A0_TOKENS:-512}
 EPOCH=2
 if [ $# -gt 0 ]; then SEEDS=("$@"); else SEEDS=(0 1 2); fi
 cd /workspace/nhi/copyright
-# Project venv, pinned to the versions used for training (requirements-lock.txt).
+# Project venv, pinned to the versions used for training (requirements.txt).
 export PATH="$PWD/.venv/bin:$PATH"
 python -c "import torch, transformers, peft; assert torch.__version__.startswith('2.4.1'), torch.__version__"
 export HF_HUB_OFFLINE=1

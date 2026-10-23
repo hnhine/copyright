@@ -1,3 +1,7 @@
+# Exact versions used for training and evaluation (pip freeze of .venv).
+# Direct dependencies: torch, transformers, accelerate, peft, safetensors,
+# sacrebleu, lingua-language-detector, tqdm. Everything else is transitive.
+--extra-index-url https://download.pytorch.org/whl/cu124
 accelerate==1.15.0
 certifi==2026.10.19
 charset-normalizer==3.5.2
